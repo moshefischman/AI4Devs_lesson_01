@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from reviewer.chunk import estimate_tokens
-from reviewer.claude_client import ChunkResponse, ChunkResult, RawFinding
+from reviewer.claude_client import ChunkResponse, ChunkResult, RawFinding, StructuredResponse
 from reviewer.model import Usage
 from reviewer.source import Source
+from reviewer.test_gen_service import GeneratedCase, GeneratedSuite, SuspectedBug, _test_nodes
+from reviewer.test_runner import RunResult
 
 FAKE_KEY = "sk-ant-test-0000-not-a-real-key"
 
@@ -69,6 +73,94 @@ class FakeClient:
 
     def count_tokens(self, system: str, content: str) -> int:
         return self.tokens if self.tokens is not None else estimate_tokens(content)
+
+
+# ---------------------------------------------------------------- test generation fakes
+
+
+def gen_suite(
+    code: str,
+    cases: list[tuple[str, str, str]] | None = None,
+    bugs: list[dict[str, Any]] | None = None,
+) -> GeneratedSuite:
+    """cases: (name, intent, target) tuples; defaults to one happy case per test function."""
+    if cases is None:
+        cases = [(name, "happy", "clamp") for name in _test_names(code)]
+    return GeneratedSuite(
+        code=code,
+        cases=[GeneratedCase(name=n, intent=i, target=t) for n, i, t in cases],
+        suspected_bugs=[SuspectedBug(**bug) for bug in bugs or []],
+    )
+
+
+def _test_names(code: str) -> list[str]:
+    return [key for key, _node, _owner in _test_nodes(ast.parse(code))]
+
+
+class FakeGenClient(FakeClient):
+    """Adds `complete`: returns the queued GeneratedSuite objects in order."""
+
+    def __init__(self, suites: list[GeneratedSuite | Exception], **kwargs: Any):
+        super().__init__(**kwargs)
+        self.suites = list(suites)
+        self.prompts: list[str] = []
+
+    def complete(self, system: str, content: str, schema: Any, result_type: Any):
+        self.prompts.append(content)
+        item = self.suites.pop(0) if len(self.suites) > 1 else self.suites[0]
+        if isinstance(item, Exception):
+            raise item
+        return StructuredResponse(result=item.model_copy(deep=True), usage=Usage(input_tokens=50))
+
+
+Outcome = str | Callable[[bool], str]
+
+
+class FakeRunner:
+    """Decides each test's outcome from `behavior[name]` (a string, or f(reverse) -> str).
+
+    Tests marked xfail in the code turn "failed" into "xfailed" and "passed" into "xpassed",
+    like pytest with strict=True. Unknown tests pass.
+    """
+
+    def __init__(
+        self,
+        behavior: dict[str, Outcome] | None = None,
+        coverage: float = 75.0,
+        existing: RunResult | None = None,
+    ):
+        self.behavior = behavior or {}
+        self.coverage = coverage
+        self.existing = existing or RunResult()
+        self.runs: list[tuple[str, bool]] = []
+        self.existing_calls: list[list[Path]] = []
+
+    def run_generated(self, code, file_name, targets, reverse=False) -> RunResult:
+        self.runs.append((code, reverse))
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as exc:
+            return RunResult(collection_error=str(exc))
+        outcomes, messages = {}, {}
+        for key, node, _owner in _test_nodes(tree):
+            rule = self.behavior.get(key, "passed")
+            outcome = rule(reverse) if callable(rule) else rule
+            if outcome == "collection_error":
+                return RunResult(collection_error="ImportError: boom")
+            marked = any("xfail" in ast.unparse(d) for d in node.decorator_list)
+            if marked:
+                outcome = {"failed": "xfailed", "passed": "xpassed"}.get(outcome, outcome)
+            outcomes[key] = outcome
+            if outcome in ("failed", "xpassed"):
+                messages[key] = f"AssertionError in {key}"
+        if not outcomes:
+            return RunResult(collection_error="no tests collected")
+        target_key = targets[0].resolve().as_posix()
+        return RunResult(outcomes=outcomes, messages=messages, coverage={target_key: self.coverage})
+
+    def run_existing(self, test_paths, targets) -> RunResult:
+        self.existing_calls.append(test_paths)
+        return self.existing
 
 
 def sdk_message(
