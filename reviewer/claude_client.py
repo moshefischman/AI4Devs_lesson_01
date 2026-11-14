@@ -11,7 +11,7 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Generic, Protocol, TypeVar
 
 import anthropic
 from pydantic import BaseModel, ValidationError
@@ -88,11 +88,19 @@ class ChunkResult(BaseModel):
     summary: str
 
 
+ResultT = TypeVar("ResultT", bound=BaseModel)
+
+
 @dataclass
-class ChunkResponse:
-    result: ChunkResult
+class StructuredResponse(Generic[ResultT]):
+    """A schema-validated response: `result` is an instance of the requested model."""
+
+    result: ResultT
     usage: Usage
     request_id: str | None = None
+
+
+ChunkResponse = StructuredResponse[ChunkResult]
 
 
 class ReviewClient(Protocol):
@@ -117,8 +125,12 @@ def _usage_from(message: Any) -> Usage:
     )
 
 
-def parse_message(message: Any, request_id: str | None = None) -> ChunkResponse:
-    """Check stop_reason first, then validate the JSON text against ChunkResult."""
+def parse_message(
+    message: Any,
+    request_id: str | None = None,
+    result_type: type[ResultT] = ChunkResult,  # type: ignore[assignment]
+) -> StructuredResponse[ResultT]:
+    """Check stop_reason first, then validate the JSON text against `result_type`."""
     request_id = request_id or getattr(message, "_request_id", None)
     stop_reason = getattr(message, "stop_reason", None)
     if stop_reason == "refusal":
@@ -129,10 +141,10 @@ def parse_message(message: Any, request_id: str | None = None) -> ChunkResponse:
 
     text = "".join(block.text for block in getattr(message, "content", []) if block.type == "text")
     try:
-        result = ChunkResult.model_validate(json.loads(text))
+        result = result_type.model_validate(json.loads(text))
     except (json.JSONDecodeError, ValidationError) as exc:
         raise InvalidResponseError(f"response did not match the schema: {exc}", request_id) from exc
-    return ChunkResponse(result=result, usage=_usage_from(message), request_id=request_id)
+    return StructuredResponse(result=result, usage=_usage_from(message), request_id=request_id)
 
 
 @dataclass
@@ -158,6 +170,16 @@ class ClaudeClient:
         return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
 
     def review_chunk(self, system: str, content: str) -> ChunkResponse:
+        return self.complete(system, content, CHUNK_RESULT_SCHEMA, ChunkResult)
+
+    def complete(
+        self,
+        system: str,
+        content: str,
+        schema: dict[str, Any],
+        result_type: type[ResultT],
+    ) -> StructuredResponse[ResultT]:
+        """One streaming request whose output is constrained to `schema`."""
         params: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
@@ -166,7 +188,7 @@ class ClaudeClient:
             "thinking": {"type": "adaptive"},
             "output_config": {
                 "effort": self.effort,
-                "format": {"type": "json_schema", "schema": CHUNK_RESULT_SCHEMA},
+                "format": {"type": "json_schema", "schema": schema},
             },
         }
         if self.fallback:
@@ -179,9 +201,10 @@ class ClaudeClient:
                 # Streamed messages carry no _request_id; the stream exposes it.
                 request_id = getattr(stream, "request_id", None)
 
-        response = parse_message(message, request_id)
+        response = parse_message(message, request_id, result_type)
         log.debug(
-            "chunk reviewed: request_id=%s input=%d output=%d cache_read=%d",
+            "%s received: request_id=%s input=%d output=%d cache_read=%d",
+            result_type.__name__,
             response.request_id,
             response.usage.input_tokens,
             response.usage.output_tokens,

@@ -1,3 +1,9 @@
 anthropic>=2.8,<3
 python-dotenv>=1.2,<2
 pydantic>=2.14,<3
+# Runtime tools for test-gen and report (plan 002): generated suites run under
+# pytest + pytest-cov, and the report measures lint (ruff) and complexity (radon).
+pytest>=9.2,<10
+pytest-cov>=7.1,<8
+ruff>=0.17,<1
+radon>=6.0,<7

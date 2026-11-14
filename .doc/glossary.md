@@ -18,6 +18,19 @@
   Claude request. Code: `reviewer.chunk.Chunk`.
 - `skipped source` — a source that was not reviewed (refusal, invalid response) and is
   reported as such instead of being silently dropped.
+- `test target` — the Python module a test suite is generated for: its public functions,
+  classes, and existing tests. Code: `reviewer.test_target.TestTarget`.
+- `test case` — one generated test function with an `intent` (`happy`, `edge`,
+  `failure`) and a final `status` (`passed`, `xfail`, `discarded`).
+  Code: `reviewer.model.TestCase`.
+- `test suite` — the generated test file for one test target, plus its cases, iteration
+  count, and coverage before/after. Code: `reviewer.model.TestSuite`.
+- `quality score` — 0–100 weighted score: review 40 %, coverage 30 %, passing tests 15 %,
+  lint and complexity 15 %. Code: `reviewer.model.QualityScore`.
+- `verdict` — `pass` (score ≥ 80), `warn` (60–79), or `fail` (< 60 or any `critical`
+  finding).
+- `quality report` — review + test results + coverage + static metrics + quality score
+  + verdict for one target. Code: `reviewer.model.QualityReport`.
 
 ## Naming Alignment
 - Keep this glossary aligned with naming decisions in `../.claude/rules/naming.md`.

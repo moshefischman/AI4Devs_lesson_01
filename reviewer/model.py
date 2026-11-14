@@ -118,3 +118,114 @@ class Review(BaseModel):
 
     def has_finding_at_least(self, threshold: Severity) -> bool:
         return any(finding.severity.at_least(threshold) for finding in self.findings)
+
+
+class TestIntent(str, Enum):
+    __test__ = False  # not a pytest test class
+
+    HAPPY = "happy"
+    EDGE = "edge"
+    FAILURE = "failure"
+
+
+class TestStatus(str, Enum):
+    __test__ = False
+
+    PASSED = "passed"
+    XFAIL = "xfail"
+    DISCARDED = "discarded"
+
+
+class TestCase(BaseModel):
+    __test__ = False
+
+    name: str
+    intent: TestIntent
+    target: str
+    status: TestStatus
+    failure_reason: str | None = None
+
+
+class TestSuite(BaseModel):
+    __test__ = False
+
+    target_file: str
+    test_file: str
+    code: str
+    cases: list[TestCase]
+    iteration_count: int
+    coverage_before: float | None = None
+    coverage_after: float | None = None
+    bug_findings: list[Finding] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    usage: Usage = Field(default_factory=Usage)
+
+    def count(self, status: TestStatus) -> int:
+        return sum(1 for case in self.cases if case.status is status)
+
+
+class Verdict(str, Enum):
+    PASS = "pass"
+    WARN = "warn"
+    FAIL = "fail"
+
+    @property
+    def rank(self) -> int:
+        return [Verdict.PASS, Verdict.WARN, Verdict.FAIL].index(self)
+
+
+class LintResult(BaseModel):
+    file: str
+    violation_count: int
+    line_count: int
+    score: float
+
+
+class ComplexityResult(BaseModel):
+    file: str
+    average: float
+    worst_name: str | None = None
+    worst_complexity: int = 0
+    score: float
+
+
+class FileCoverage(BaseModel):
+    file: str
+    percent: float
+
+
+class TestRunSummary(BaseModel):
+    __test__ = False
+
+    passed: int = 0
+    failed: int = 0
+    timed_out: bool = False
+
+    @property
+    def total(self) -> int:
+        return self.passed + self.failed
+
+
+class QualityScore(BaseModel):
+    """Each component is 0-100, or None when it could not be measured."""
+
+    review: float
+    coverage: float | None
+    tests: float | None
+    static: float | None
+    total: float
+    weights: dict[str, float]
+
+
+class QualityReport(BaseModel):
+    target: str
+    review: Review
+    test_suites: list[TestSuite] = Field(default_factory=list)
+    coverage: list[FileCoverage] = Field(default_factory=list)
+    test_run: TestRunSummary | None = None
+    lint: list[LintResult] = Field(default_factory=list)
+    complexity: list[ComplexityResult] = Field(default_factory=list)
+    score: QualityScore
+    verdict: Verdict
+    notes: list[str] = Field(default_factory=list)
+    created_at: datetime

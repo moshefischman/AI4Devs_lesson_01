@@ -37,3 +37,9 @@ class OutputLimitError(ApiError):
 
 class InvalidResponseError(ApiError):
     """The response did not validate against the expected schema."""
+
+
+class RunnerError(ReviewerError):
+    """pytest could not run at all (missing, crashed, or usage error)."""
+
+    exit_code = 4
