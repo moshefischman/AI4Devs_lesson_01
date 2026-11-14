@@ -43,3 +43,18 @@ Each criterion must be provable by a test.
   exist, `2` usage/configuration error, `3` API error; `--format json` validates against
   the `Review` schema.
 - AC07 — The API key never appears in logs or output, including with `--verbose`.
+- AC08 — Target analysis extracts every public function and method of
+  `tests/fixtures/sample_module.py` and skips private ones.
+- AC09 — A generated suite that hangs is stopped by the timeout; the test subprocess
+  receives no `ANTHROPIC_*` or other credential variable and cannot open sockets.
+- AC10 — The generate → run → repair loop stops at the iteration limit (3); a persistent
+  failure Claude attributes to a real bug becomes `xfail(strict=True)` plus a `bug`
+  finding, any other persistent failure is discarded.
+- AC11 — Score and verdict follow the 40/30/15/15 weights and the 80/60 thresholds; a
+  `critical` finding forces `fail`; unmeasured components renormalize the weights.
+- AC12 — `report --format json` validates against the `QualityReport` schema; exit codes
+  `0` (below `--fail-on-verdict`), `1`, `2`, `3`, `4` (runner error).
+- AC13 — `test-gen` without `--apply` writes only inside its `--out` directory; with
+  `--apply` it never overwrites an existing test file.
+- AC14 — Against the real API, `test-gen tests/fixtures/sample_module.py` produces a suite
+  that passes under plain `pytest` and raises the module's coverage above the baseline.

@@ -1,6 +1,6 @@
 # Plan 002 — Generación automática de pruebas unitarias y reporte de calidad
 
-Status: active
+Status: done
 Owner:
 Last updated: 2026-11-14
 
